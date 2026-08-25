@@ -1,0 +1,6 @@
+c repeated literals and a tautology, both legal DIMACS
+p cnf 4 4
+1 1 2 0
+-3 3 0
+-1 -2 0
+2 4 4 0

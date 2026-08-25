@@ -1,0 +1,17 @@
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrlrrr}
+\toprule
+instance & vars & clauses & result & decisions & unit props & CPU s \\
+\midrule
+toy\_5.sat & 9 & 13 & SAT & 5 & 3 & 0.000 \\
+toy\_50.sat & 99 & 148 & SAT & 50 & 48 & 0.000 \\
+toy\_100.sat & 199 & 298 & SAT & 100 & 98 & 0.000 \\
+nested\_5.sat & 22 & 45 & SAT & 6 & 15 & 0.000 \\
+nested\_8.sat & 136 & 371 & SAT & 65 & 1\,596 & 0.000 \\
+\bottomrule
+\end{tabular}
+\caption{The five example inputs from the first task, read in the simplified SMT-LIB format and encoded by Tseitin before solving. Variable and clause counts are those of the resulting CNF.}
+\label{tab:examples}
+\end{table}

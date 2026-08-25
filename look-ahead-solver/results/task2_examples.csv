@@ -1,0 +1,6 @@
+clauses,clauses_checked,conflicts,cpu_seconds,decisions,instance,unit_props,variables,vars,verdict,wall_seconds
+13,15,0,0.0,5,toy_5.sat,3,9,9,SAT,4.6e-06
+148,195,0,0.0,50,toy_50.sat,48,99,99,SAT,2.46e-05
+298,395,0,0.0,100,toy_100.sat,98,199,199,SAT,6.29e-05
+45,49,0,0.0,6,nested_5.sat,15,22,22,SAT,2.01e-05
+371,4642,31,0.0,65,nested_8.sat,1596,136,136,SAT,0.0001931

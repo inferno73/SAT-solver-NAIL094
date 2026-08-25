@@ -1,0 +1,13 @@
+# everything here is also covered by the .gitignore at the repository root,
+# this file keeps look-ahead-solver self contained if it is ever moved
+bin/
+__pycache__/
+*.pyc
+*.o
+*.exe
+
+# LaTeX intermediates, report.pdf sits beside report.tex and is committed
+report.out
+*.aux
+*.log
+*.synctex.gz

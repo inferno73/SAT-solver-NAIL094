@@ -1,0 +1,23 @@
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrlrrrrr}
+\toprule
+& & & & & \multicolumn{3}{c}{clauses checked} & \multicolumn{2}{c}{time (s)} \\
+\cmidrule(lr){6-8}\cmidrule(lr){9-10}
+instance & vars & clauses & $k>2$ & result & adjacency & watched & ratio & adjacency & watched \\
+\midrule
+hole6 & 42 & 133 & 0.05 & UNSAT & 63\,161 & 61\,730 & 1.02 & 0.00089 & 0.00128 \\
+hole7 & 56 & 204 & 0.04 & UNSAT & 722\,098 & 707\,121 & 1.02 & 0.00939 & 0.01300 \\
+hole8 & 72 & 297 & 0.03 & UNSAT & 9\,305\,155 & 9\,126\,435 & 1.02 & 0.12262 & 0.15621 \\
+hole9 & 90 & 415 & 0.02 & UNSAT & 133\,426\,496 & 131\,029\,082 & 1.02 & 1.67565 & 2.21553 \\
+ais6 & 61 & 441 & 0.28 & SAT & 2\,797 & 1\,855 & 1.51 & 0.00014 & 0.00012 \\
+ais8 & 113 & 1149 & 0.27 & SAT & 51\,553 & 31\,531 & 1.64 & 0.00102 & 0.00084 \\
+ais10 & 181 & 2377 & 0.26 & SAT & 1\,112\,800 & 653\,138 & 1.70 & 0.01909 & 0.01356 \\
+ais12 & 265 & 4269 & 0.26 & SAT & 30\,580\,645 & 17\,250\,426 & 1.77 & 0.37316 & 0.33094 \\
+\bottomrule
+\end{tabular}
+\caption{Adjacency lists against lazy watched literals on PHOLE and All Interval Series. $k>2$ is the fraction of clauses with more than two literals. Times are the fastest of three runs and cover search only. Both engines produce identical decision and conflict counts on every instance, so the two columns differ in propagation alone.}
+\label{tab:comparison}
+\end{table}

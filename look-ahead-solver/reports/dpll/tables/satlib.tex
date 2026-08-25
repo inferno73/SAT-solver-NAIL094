@@ -1,0 +1,24 @@
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrlrrr}
+\toprule
+instance & vars & clauses & result & decisions & unit props & CPU s \\
+\midrule
+hole6 & 42 & 133 & UNSAT & 6\,490 & 29\,322 & 0.001 \\
+hole7 & 56 & 204 & UNSAT & 65\,560 & 318\,495 & 0.009 \\
+hole8 & 72 & 297 & UNSAT & 756\,686 & 3\,933\,538 & 0.124 \\
+hole9 & 90 & 415 & UNSAT & 9\,825\,028 & 54\,417\,935 & 1.635 \\
+ais6 & 61 & 441 & SAT & 57 & 515 & 0.000 \\
+ais8 & 113 & 1149 & SAT & 550 & 7\,423 & 0.001 \\
+ais10 & 181 & 2377 & SAT & 8\,973 & 138\,777 & 0.017 \\
+ais12 & 265 & 4269 & SAT & 192\,780 & 3\,389\,633 & 0.355 \\
+uf50-01 & 50 & 218 & SAT & 1\,016 & 7\,573 & 0.001 \\
+uf50-010 & 50 & 218 & SAT & 370 & 2\,526 & 0.001 \\
+uf50-0100 & 50 & 218 & SAT & 318 & 2\,355 & 0.000 \\
+uf50-0101 & 50 & 218 & SAT & 44 & 224 & 0.000 \\
+\bottomrule
+\end{tabular}
+\caption{SATLIB instances from three categories. CPU time is the fastest of three runs and covers search only, not parsing. Clause counts are after duplicate and tautological clauses are removed at load.}
+\label{tab:satlib}
+\end{table}

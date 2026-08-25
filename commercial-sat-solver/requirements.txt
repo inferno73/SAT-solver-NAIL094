@@ -1,0 +1,13 @@
+# Python 3.11 or newer, PySAT has no distribution for 3.8
+# Do not add the [pblib] extra on Windows, pypblib fails to build under MSVC
+#
+# The versions the reported measurements were taken with are pinned below.
+# python-sat is the one that matters for reproducing them, since it carries the
+# solver binaries: 1.9.dev7 provides CaDiCaL 1.5.3, Glucose 4 and MiniSat 2.2,
+# which are the three the reports name.
+python-sat==1.9.dev7
+pandas==3.0.5
+matplotlib==3.11.1
+
+# only needed to run experiments.ipynb, not to run the solvers or the tests
+ipykernel

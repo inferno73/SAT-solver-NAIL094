@@ -1,0 +1,46 @@
+# Python environment and bytecode
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter checkpoints, the notebooks themselves are committed with their outputs
+.ipynb_checkpoints/
+
+# compiled solver, rebuilt with make
+bin/
+*.o
+*.exe
+
+# LaTeX intermediates
+report.out
+*.aux
+*.log
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.toc
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+
+# editor and IDE settings, useful locally, not part of the submission
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+
+# operating system clutter
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store

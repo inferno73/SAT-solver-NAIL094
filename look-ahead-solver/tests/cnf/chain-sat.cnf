@@ -1,0 +1,9 @@
+c implication chain forcing every variable, satisfiable by exactly one model
+p cnf 6 7
+1 0
+-1 2 0
+-2 3 0
+-3 4 0
+-4 5 0
+-5 6 0
+-6 -1 2 0

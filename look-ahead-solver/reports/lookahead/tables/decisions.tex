@@ -1,0 +1,21 @@
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lrlrrrrrr}
+\toprule
+instance & vars & result & plain DPLL & counters & CRH & WBH & BSH & WBH bare \\
+\midrule
+hole6 & 42 & UNSAT & 6\,490 & 6\,490 & 478 & 478 & 478 & 1\,038 \\
+hole7 & 56 & UNSAT & 65\,560 & 65\,560 & 3\,358 & 3\,358 & 3\,358 & 10\,498 \\
+hole8 & 72 & UNSAT & 756\,686 & 756\,686 & 26\,878 & 26\,878 & 26\,878 & 121\,182 \\
+ais6 & 61 & SAT & 57 & 57 & 4 & 3 & 6 & 3 \\
+ais8 & 113 & SAT & 550 & 550 & 6 & 5 & 5 & 6 \\
+ais10 & 181 & SAT & 8\,973 & 8\,973 & 13 & 10 & 12 & 13 \\
+ais12 & 265 & SAT & 192\,780 & 192\,780 & 29 & 6 & 6 & 6 \\
+uf50-01 & 50 & SAT & 1\,016 & 1\,016 & 9 & 9 & 4 & 13 \\
+\bottomrule
+\end{tabular}
+\caption{Number of decisions, that is the size of the search tree. The counters column is the eager engine under plain branching, a control rather than a solver variant; its tree is identical to plain DPLL by construction. WBH bare is WBH with local learning and autarky reasoning switched off.}
+\label{tab:decisions}
+\end{table}

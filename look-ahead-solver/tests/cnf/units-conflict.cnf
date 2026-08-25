@@ -1,0 +1,5 @@
+c contradictory units, must fail during the level 0 propagation
+p cnf 3 3
+1 0
+2 3 0
+-1 0

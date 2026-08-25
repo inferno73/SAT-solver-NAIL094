@@ -1,0 +1,1808 @@
+         i             "p01c05lah" -- 2008/11/20 -- 16:31 -- page 155 -- #1                                              i
+i                                                                                                                                 i
+
+            Handbook of Satisfiability                                              155
+
+            Armin Biere, Marijn Heule, Hans van Maaren and Toby Walsh (Eds.)
+
+            IOS Press, 2009
+
+            c 2009 Marijn J.H. Heule and Hans van Maaren and IOS Press. All rights
+
+            reserved.
+
+                                         Chapter 5
+
+                   Look-Ahead Based SAT Solvers
+
+                                      Marijn J.H. Heule and Hans van Maaren
+
+            5.1. Introduction
+
+            Imagine that you are for the first time in New York City (NYC). A cab just
+            dropped you off at a crossing and now you want to see the most beautiful part
+            of town. You consider two potential strategies to get going: A conflict-driven
+            strategy and a look-ahead strategy.
+
+                 The conflict-driven strategy consists of the following heuristics: On each
+            crossing you look in all directions and walk towards the crossing which appears
+            most beautiful at first sight. If at a certain crossing all new directions definitely
+            lead to dead end situations, you write the location in a booklet to avoid the place
+            in the future and you evaluate which was the nearest crossing where you likely
+            chose the wrong direction. You go back to that crossing and continue with a new
+            preferred direction.
+
+                 The look-ahead strategy spends much more time to select the next crossing.
+            First all adjacent crossings are visited. At each of them all directions are ob-
+            served before returning to the current crossing. Now the next crossing is selected
+            based on all observed directions. A schematic view of both strategies is shown in
+            Figure 5.1.
+
+                             Figure 5.1. A NYC walk, conflict-driven (left) and look-ahead (right). denotes the target.           i
+                                                                                                                         i
+i
+         i
+         i           "p01c05lah" -- 2008/11/20 -- 16:31 -- page 156 -- #2                                    i
+i                                                                                                                     i
+
+            156                                  Chapter 5. Look-Ahead Based SAT Solvers
+
+                 As the reader has probably expected by now, the conflict-driven and look-
+            ahead SAT solving architectures have several analogies with the conflict-driven
+            and look-ahead NYC sightseeing strategies. Although the look-ahead NYC walk
+            appears very costly, in practice it solves some problems quite efficiently. This
+            chapter walks through the look-ahead architecture for Sat solvers.
+
+            5.1.1. Domain of application
+
+            Before going into the details of the look-ahead architecture, we first consider a
+            wide range of problems and ask the question: Which architecture is the most
+            appropriate to adequately solve a particular instance?
+
+                 Traditionally, look-ahead Sat solvers are strong on random k-Sat formulae
+            and especially on the unsatisfiable instances. [Her06] suggest that in practice,
+            look-ahead Sat solvers are strong on benchmarks with either a low density (ratio
+            clauses to variables) or a small diameter (longest shortest path in for instance the
+            resolution graph1). Figure 5.2 illustrates this. Using the structured (crafted and
+            industrial) benchmarks from the Sat 2005 competition and SATlib, the relative
+            performance is measured for the solvers minisat (conflict-driven) and march (look-
+            ahead). For a given combination of density and diameter of the resolution graph,
+            the strongest solver is plotted.
+
+                     1000
+
+                                                                                          minisat
+                                                                                           march +
+
+                     100 +++++
+
+            density                           +
+
+                            ++  +
+                            +
+                            +   ++++++++++++  ++
+                                              + ++
+                     10
+
+                                +                ++
+                                              ++
+
+                                              + + + ++ +
+
+                                                          +
+
+                                                          ++
+
+                     1                               10                 100               1000
+                          1
+
+                                                              diameter
+
+            Figure 5.2. Strongest architecture on structured benchmarks split by density and diameter.
+            Architectures represented by minisat (conflict-driven) and march (look-ahead).
+
+                1The resolution graph is a clause based graph. Its vertices are the clauses and clauses are
+            connected if they have exactly one clashing literal.
+
+i                                                                                                                     i
+         i                                                                                                   i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 157 -- #3                                         i
+i                                                                                                                 i
+
+            Chapter 5. Look-Ahead Based SAT Solvers               157                                             i
+                                                                                                         i
+                 Notice that Figure 5.2 compares minisat to march and therefore it should not
+            be interpreted blindly as a comparison between any conflict-driven and look-ahead
+            Sat solvers in general. The solver march is the only look-ahead Sat solver that is
+            optimized for large and structured benchmarks. Selecting a different look-ahead
+            Sat solver would change the picture in favor of minisat.
+
+                 However, it seems that in the current state of development both architec-
+            tures have their own range of applications. The almost sharp separation shown
+            in Figure 5.2 can be explained as follows: Density expresses the cost of unit prop-
+            agation. The higher the density, the more clauses need to be reduced for each
+            assigned variable. Therefore, look-ahead becomes very expensive for formulae
+            with high densities, while using lazy data-structures (like minisat), the cost of
+            unit propagation does not increase heavily on these formulae.
+
+                 The diameter expresses the global connectivity of clauses. If just a few vari-
+            ables cover all literals in a set of clauses, such a set is referred to as a local cluster.
+            The larger the diameter, the more local clusters occur within the formula. Local
+            clusters reduce the effectiveness of reasoning by look-ahead Sat solvers: Assigning
+            decision variables to a truth value will modify the formula only locally. There-
+            fore, expensive reasoning is only expected to learn facts within the last modified
+            cluster. On the other hand, conflict-driven solvers benefit from local clusters:
+            Conflict clauses will likely arise from local conflicts, yielding small clauses con-
+            sisting of some covering variables. Also, they may be reused frequently.
+
+            5.2. General and Historical Overview
+
+            5.2.1. The Look-Ahead Architecture
+
+            The look-ahead architecture is based on the DPLL framework [DLL62]: It is a
+            complete solving method which selects in each step a decision variable xdecision
+            and recursively calls DPLL for the reduced formula where xdecision is assigned to
+            false (denoted by F [xdecision = 0]) and another where xdecision is assigned to true
+            (denoted by F [xdecision = 1]).
+
+                 A formula F is reduced by unit propagation: Given a formula F , an unas-
+            signed variable x and a Boolean value B, first x is assigned to B. If this assignment
+             results in a unit clause (clause of size 1) then  is expanded by assigning the
+            remaining literal of that clause to true. This is repeated until no unit clauses
+            are left in  applied to F (denoted by   F ) - see Algorithm 5.1. The reduced
+            formula consists of all clauses that are not satisfied. So, F [x = B] :=   F .
+
+            Algorithm 5.1 UnitPropagation( formula F , variable x, B  {0, 1} )
+
+             1:  := {x B}
+             2: while empty clause /   F and unit clause y    F do
+             3:  :=   {y  1}
+             4: end while
+             5: return   F
+
+                 The recursion has two kinds of leaf nodes: Either all clauses have been satis-
+            fied (denoted by F = ), meaning that a satisfying assignment has been found,
+            or F contains an empty clause (a clause of which all literals have been falsified),
+            meaning a dead end. In the latter case the algorithm backtracks.
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 158 -- #4                                         i
+i                                                                                                                      i
+
+            158  Chapter 5. Look-Ahead Based SAT Solvers
+
+                 The decision variable is selected by the LookAhead procedure. Besides
+
+            selecting xdecision it also attempts to reduce the formula in each step by assigning
+            forced variables and to further constrain it by adding clauses. Algorithm 5.2 shows
+            the top level structure. Notice that the LookAhead procedure returns both a
+
+            simplified formula and xdecision.
+                 In addition, the presented algorithm uses direction heuristics to select which
+
+            of the reduced formulae F [xdecision = 0] or F [xdecision = 1] should be visited
+            first - see Section 5.3.2. Effective direction heuristics improve the performance on
+            satisfiable instances2. Although direction heuristics can be applied to all DPLL
+
+            based solvers, look-ahead Sat solvers are particularly the ones that use them.
+
+            Algorithm 5.2 DPLL( formula F )
+
+             1: if F =  then
+             2: return satisfiable
+             3: end if
+             4: < F ; xdecision > := LookAhead( F )
+             5: if empty clause  F then
+             6: return unsatisfiable
+             7: else if no xdecision is selected then
+             8: return DPLL( F )
+             9: end if
+            10: B := DirectionHeuristic( xdecision, F )
+            11: if DPLL( F [xdecision = B] ) = satisfiable then
+            12: return satisfiable
+            13: end if
+            14: return DPLL( F [xdecision = ¬B] )
+
+                 The LookAhead procedure, as the name suggests, performs look-aheads. A
+            look-ahead on x starts by assigning x to true followed by unit propagation. The
+            importance of x is measured and possible reductions of the formula are detected.
+            After this analysis, it backtracks, ending the look-ahead. The rationale of a look-
+            ahead operation is that evaluating the effect of actually assigning variables to
+            truth values and performing unit propagation is more adequate than taking a
+            cheap guess using some statistical data on F .
+
+                 This brings us to the two main features of the LookAhead procedure. The
+            first is the decision heuristic which measures the importance of a variable. This
+            heuristic consists of a difference or distance heuristic (in short Diff) and a heuris-
+            tic that combines two Diff values (in short MixDiff).
+
+                 A Diff heuristic measures the reduction of the formulae caused by a look-
+            ahead. The larger the reduction, the higher the heuristic value. This reduction
+            can be measured with all kinds of statistics. Effective statistics are the reduction
+            of free variables and the number of newly created (reduced, but not satisfied)
+            clauses. The final judgment of a variable is obtained by combining Diff(F , F [x
+            = 0]) and Diff(F , F [x = 1]) using a MixDiff heuristic. The product of these
+            numbers is generally considered to be an effective heuristic. It aims to create a
+            balanced search-tree. Notice that this is not a goal in its own: The trivial 2n tree
+            is perfectly balanced, but huge. See Chapter 7 for more details and theory.
+
+                2Direction heuristics applied in a conflict-driven setting may heavily influence performance
+            on unsatisfiable formulae.
+
+i                                                                                                                      i
+         i                                                                                                    i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 159 -- #5                                                  i
+i                                                                                                                          i
+
+                           Chapter 5. Look-Ahead Based SAT Solvers                     159                                 i
+                                                                                                                  i
+            DPLL
+
+                                         0     xa
+                                                            1
+                                     xb
+                                                                  xc
+                              1          0                 0
+                                                         ?
+
+            LookAhead
+
+                                                      FLA
+
+                              x1               x2                     x3        x4
+
+                           0      1         0      1       0              1  0      1
+
+            #new binaries  3      1         2      2                      1  2      1
+
+            Figure 5.3. A graphical representation of the look-ahead architecture. Above, the DPLL
+            super-structure (a binary tree) is shown. In each node of the DPLL-tree, the LookAhead
+            procedure is called to select the decision variable and to compute implied variables by additional
+            reasoning. Black nodes refer to leaf nodes and variables shown in the vertices refer to the decision
+            variables and look-ahead variables, respectively.
+
+                 The second main feature of the look-ahead architecture is the detection of
+            failed literals: If a look-ahead on x results in a conflict, then x is forced to be
+            assigned to false. Detection of failed literals reduces the formula because of these
+            "free" assignments. The LookAhead procedure terminates in case both xi and
+            ¬xi are detected as failed literals.
+
+                 Figure 5.3 shows a graphical representation of the look-ahead architecture.
+            On the top level, the DPLL framework is used. The selection of the decision
+            variable, reduction of the formula, and addition of learned clauses are performed
+            by the LookAhead procedure. Black nodes refer to a dead end situation, either
+            an unsatisfiable leaf node (DPLL) or a failed literal (LookAhead procedure).
+
+            Example 5.2.1. Consider the following example formula below:
+
+            FLA = (¬x1 x3)(x1 x2 x3)(x1 ¬x2 x4)(x1 ¬x2 ¬x4)(x2 ¬x3 x4)
+
+                 Since the largest clauses in FLA have size three, only new binary clauses can
+            be created. For instance, during the look-ahead on ¬x1, three new binary clauses
+            are created (all clauses in which literal x1 occurs). The look-ahead on x1 will
+            force x3 to be assigned to true by unit propagation. This will reduce the last
+            clause to a binary clause, while all other clauses become satisfied. Similarly, we
+            can compute the number of new binary clauses (denoted by #new binaries) for all
+            look-aheads - see Figure 5.3.
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 160 -- #6                               i
+i                                                                                                            i
+
+            160                        Chapter 5. Look-Ahead Based SAT Solvers
+
+                 Notice that the look-ahead on ¬x3 results in a conflict. So ¬x3 is a failed
+            literal and forces x3 to be assigned to true. Due to this forced assignment the
+            formula changes. To improve the accuracy of the look-ahead heuristics (in this
+            case the reduction measurement), the look-aheads should be performed again.
+            However, by assigning forced variables, more failed literals might be detected.
+            So, for accuracy, first iteratively perform the look-aheads until no new failed
+            literals are detected.
+
+                 Finally, the selection of the decision variable is based on the reduction mea-
+            surements of both the look-ahead on ¬xi and xi. Generally, the product is used to
+            combine the numbers. In this example, x2 would be selected as decision variable,
+            because the product of the reduction measured while performing look-ahead on
+            ¬x2 and x2 is the highest (i.e. 4). Section 7.6 discusses the preference for the
+            product in more detail.
+
+                 Several enhancements of the look-ahead architecture have been developed. To
+            reduce the cost of the LookAhead procedure, look-aheads could be restricted
+            to a subset of the free variables. The subset (denoted by P) is selected by the
+            PreSelect procedure - see Section 5.3.3. However, if |P| is too small, this could
+            decrease overall performance, since less failed literals will be detected and possibly
+            a less effective decision variable is selected.
+
+                 Various forms of additional look-ahead reasoning can be applied to F to either
+            reduce its size by assigning forced literals or to further constrain it by adding
+            learned clauses. Four kinds of additional reasoning are discussed in Section 5.4.
+
+            Algorithm 5.3 LookAhead( F )
+
+            1: P := Preselect( F )
+
+            2: repeat
+
+            3: for all variables xi  P do
+
+            4:   F := LookAheadReasoning( F , x )
+
+            5:   if empty clause  F [x = 0] and empty clause  F [x = 1] then
+
+            6:         return < F [x = 0];  >
+
+            7:   else if empty clause  F [x = 0] then
+
+            8:         F := F [x = 1]
+
+            9:   else if empty clause  F [x = 1] then
+
+            10:        F := F [x = 0]
+
+            11:  else
+
+            12:        H(xi) = DecisionHeuristic( F , F [x = 0], F [x = 1] )
+
+            13:  end if
+
+            14: end for
+
+            15: until nothing (important) has been learned
+
+            16: return < F ; xi with greatest H(xi) >
+
+                 Algorithm 5.3 shows the LookAhead procedure with these enhancements.
+            Mostly the procedure will return a simplified formula F and a decision variable
+            xdecision. Except in two cases this procedure returns no decision variable: First, if
+            the procedure detects that the formula is unsatisfiable by failed literals. Second,
+            if all (pre-selected) variables are assigned. In the latter case, we either detected
+            a satisfying assignment or we need to restart the LookAhead procedure with a
+            new set of pre-selected variables.
+
+                 Detection of failed literals or other look-ahead reasoning that change F , can
+            influence the Diff values. Also the propagation of a forced literal could result
+
+i                                                                                                            i
+         i                                                                                          i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 161 -- #7                                     i
+i                                                                                                             i
+
+            Chapter 5. Look-Ahead Based SAT Solvers               161                                         i
+                                                                                                     i
+            in the failure of the look-head on other literals. Therefore, to improve both the
+            accuracy of the decision heuristic and to increase the number of detected failed
+            literals, the LookAhead procedure can be iterated until no (important) facts
+            are learned (in the last iteration).
+
+                 The unit propagation part within the LookAhead procedure is relatively
+            the most costly aspect of this architecture. Heuristics aside, performance could
+            be improved by reduction of these costs. Section 5.5 discusses three optimization
+            techniques.
+
+            5.2.2. History of Look-Ahead Sat Solvers
+
+            The B¨ohm solver [BS96] could be considered as the first look-ahead SAT solver. In
+            each node it selects the variable that occurs most frequently in the shortest active
+            (not satisfied) clauses. Although no look-aheads are performed, it uses eager
+            data-structures which are common in look-ahead SAT solvers: Two dimensional
+            linked lists are used to cheaply compute the occurences in acitve clauses. This
+            data-structure is also used in the OKsolver. The Bo¨hm solver won the first SAT
+            competition in 1991/1992 [BKB92].
+
+                 The first Sat solver with a LookAhead procedure, posit, was developed by
+            Freeman [Fre95] in 1995. It already contained aspects of the important heuristics
+            used in the "modern" look-ahead Sat solvers:
+
+                 · Decision variables are selected by a Diff heuristic that measures the re-
+                    duction of free variables. The MixDiff heuristic used in posit, is still used
+                    in most look-ahead Sat solvers. Let L := Diff(F , F [x = 0]) and R :=
+                    Diff(F , F [x = 1]) then MixDiff is computed by 1024 · LR + L + R.
+                    The product is selected to create a balanced search-tree. The addition is
+                    for tie-breaking purposes. The factor 1024, although seemingly arbitrary,
+                    gives priority to the product (balancedness of the emerging search-tree).
+
+                 · A direction heuristic is used to improve the performance on satisfiable
+                    instances: Using a simple heuristic, it estimates the relative costs of solving
+                    F [x = 0] and F [x = 1]. The smallest one is preferred as first branch.
+
+                 · Variables in posit are pre-selected for the LookAhead procedure using
+                    three principles: First, important variables (ones with a high estimated
+                    MixDiff) are selected to get an effective decision variable. Second, literals
+                    that occur frequently negated in binary clauses are selected (so possibly not
+                    their complement) as candidate failed literals. Third, many variables are
+                    selected near the root of the tree, because here, accurate heuristics and
+                    failed literals have more impact on the size of the tree.
+
+            Results on hard random 3-Sat formulae were boosted by satz. This solver was
+            developed by Li and Anbulagan in 1997. All heuristics were optimized for these
+            benchmarks:
+
+                 · The Diff heuristic measures the newly created binary clauses in a weighted
+                    manner based on the literals in these binary clauses. This heuristic is called
+                    weighted binaries heuristic and is discussed in Section 5.3.1.2. The same
+                    MixDiff heuristic is used as in posit.
+
+                 · No direction heuristics are used. F [xdecision = 1] is always preferred.
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 162 -- #8                                      i
+i                                                                                                                   i
+
+            162  Chapter 5. Look-Ahead Based SAT Solvers
+
+                 · Variables are pre-selected using the propz heuristic [LA97a] - see Sec-
+                    tion 5.3.3.1. On random 3-Sat formulae, it pre-selects most free variables
+                    near the root of the search-tree. As the tree deepens, the number of selected
+                    variables decreases.
+
+                 In 1999 Li added a DoubleLook procedure to satz and further reduced the
+            size of the search-tree to solve random formulae [Li99]. This procedure - see
+            Section 5.4.3 - attempts to detect more failed literals by also performing some
+            look-aheads on a second level of propagation: If during the look-ahead on x
+            more than a certain number of new binary clauses are created, then additional
+            look-aheads are performed on the reduced formula F [x = 1] to check whether it
+            is unsatisfiable. The parameter (called trigger) which expresses the number of
+            new binary clauses to trigger the DoubleLook procedure is fixed to 65 based
+            on experiments on hard random 3-Sat formulae. Performance clearly improves
+            using this setting, while on many structured benchmarks it results in a slowdown:
+            The procedure is executed too frequently.
+
+                 To exploit the presence of so-called equivalence clauses in many benchmarks,
+            Li [Li00] created a special version of satz ­ called eqsatz ­ which uses equivalence
+            reasoning. During the look-ahead phase, it searches binary equivalences xi  xj
+            in the reduced formulae F [x = 0] and F [x = 1]. Using five inference rules,
+            it reasons about the detected equivalences. Due to this equivalence reasoning,
+            eqsatz was the first Sat solver to solve the hard parity32 benchmarks [CKS95]
+            without performing Gaussian elimination on the detected equivalence clauses.
+
+                 Starting from 1998, Oliver Kullmann developed the OKsolver, motivation by
+            the idea to create a "pure" look-ahead Sat solver [Kul02]. The heuristics are
+            kept clean. They are not stuffed with magic constants:
+
+                 · The Diff heuristic in OKsolver measures the newly created clauses in a
+                    weighted manner - based on the size on the new clauses. For each of
+                    the used weights a separate experiment has been performed. This clause
+                    reduction heuristic is discussed in Section 5.3.1.1. The MixDiff uses the
+                    product Diff(F , F [x = 0]) · Diff(F , F [x = 1]) which is based on the
+                     -function [KL99].
+
+                 · The direction heuristics prefer F [xdecision = 0] or F [xdecision = 1] which is
+                    probabilistically the most satisfiable. Details are shown in Section 5.3.2.
+
+                 · No pre-selection heuristics are used.
+
+            Besides the clean heuristics, OKsolver also adds some reasoning to the look-ahead
+            architecture:
+
+                 · Local Learning3: If the look-ahead on x assigns y to true, then we learn
+                    x  y. This can be stored as binary clause ¬x  y. These learned binary
+                    clauses are valid under the partial assignment. This means that they should
+                    be removed while backtracking.
+
+                 · Autarky Reasoning: If during the look-ahead on x no new clauses are
+                    created then an autarky is detected. This means that F [x = 1] is satisfi-
+                    ability equivalent with F . Therefore, x can be freely assigned to true. If
+
+                3Local learning is an optinal feature in the OKsolver which was turned off in the version
+            submitted to SAT 2002.
+
+i                                                                                                                   i
+         i                                                                                                 i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 163 -- #9                                    i
+i                                                                                                            i
+
+            Chapter 5. Look-Ahead Based SAT Solvers               163                                        i
+                                                                                                    i
+                    only one new clause is created, then an 1-autarky is detected. In this case,
+                    several local learned binary clauses can be added. Details are presented in
+                    Section 5.4.2.
+                 · Backjumping: While backtracking, the OKsolver maintains a list of the
+                    variables that were responsible for detected conflicts. If a decision variable
+                    does not occur in the list, the second branch can be skipped. This technique
+                    has the same effect as the ones used in conflict-driven solvers.
+
+            To maximize the number of learned facts, the LookAhead procedure is iter-
+            ated until in the last iteration no new forced literals have been detected and no
+            new binary clauses have been added. During the first Sat competition4 (2002),
+            OKsolver won both divisions of random k-Sat benchmarks.
+
+                 The first version of march, developed by Heule et al. in 2002 was inspired by
+            satz and applied most of its features. The most significant difference was a pre-
+            processing technique which translated any formula to 3-Sat. The updated version
+            of 2003, march eq, was modified to become a look-ahead Sat solver for general
+            purposes. New techniques were added to increase performance on structured
+            instances, while still being competitive on random formulae. Three techniques
+            have been added to improve efficiency. Due to some overhead these techniques
+            are cost neutral on random formulae, but generate significant speed-ups on many
+            structured instances:
+
+                 · The binary and non-binary clauses of the formula are stored in separate
+                    data-structures. This reduces the required memory (especially on struc-
+                    tured benchmarks) and facilitates a more efficient unit propagation - see
+                    Section 5.5.1.
+
+                 · Before entering the LookAhead procedure, all inactive (satisfied) clauses
+                    are removed from the data-structures. This reduces the costs os unit prop-
+                    agation during this procedure - see Section 5.5.2.
+
+                 · By building implication trees of the binary clauses containing two pre-
+                    selected variables, a lot of redundancy in the LookAhead procedure can
+                    be tackled - see Section 5.5.3.
+
+            Also equivalence reasoning was added. Instead of searching for equivalence clauses
+            in all reduced formulae, march eq only extracts them from the input formula.
+            They are stored in a separate data-structure to implement a specialized unit prop-
+            agation procedure. The solver won two divisions of crafted benchmarks during
+            Sat 2004.
+
+                 The kcnfs solver by Dubois and Dequen, developed in 2004, is in many aspects
+            similar to satz. However, it features some important improvements with respect
+            to hard random k-Sat formulae:
+
+                 · The most effective modification is a minor one. Like satz, the Diff heuris-
+                    tic measures the newly created binary clauses in a weighted manner -
+                    based on occurrences of the variables in these clauses. However, instead of
+                    adding the weighted literals, they are multiplied per binary clause - see Sec-
+                    tion 5.3.1.3. This backbone search heuristic (BSH) significantly improves
+                    the performance on random k-Sat formulae.
+
+                4see www.satcompetition.org
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 164 -- #10                             i
+i                                                                                                           i
+
+            164  Chapter 5. Look-Ahead Based SAT Solvers
+
+                 · The implementation is optimized for efficiency on random k-Sat formulae.
+                 · Normalization has been developed for BSH, such that it can measure newly
+
+                    created clauses of any size. This is required for fast performance on random
+                    k-Sat formulae with k > 3.
+
+            The kcnfs solver performs very strong on random formulae on the Sat competi-
+            tions. It won one random division during both Sat 2003 and Sat 2004, and even
+            two random divisions during Sat 2005.
+
+                 In 2005 two adaptive heuristics were added to march eq, resulting in march dl:
+
+                 · It was observed [HvM06a] that there is some correlation between the num-
+                    ber of failed literals and the optimal number of pre-selected free variables.
+                    Based on this observation, an adaptive heuristic was added which aims to
+                    converge to the optimal value.
+
+                 · An adaptive algorithm for the DoubleLook procedure [HvM07] has been
+                    added to march eq. It modifies trigger after each look-ahead. In contrast
+                    to earlier implementations of the DoubleLook procedure, it now reduces
+                    the computational costs on almost all formulae.
+
+            5.3. Heuristics
+
+            As the previous section showed, the look-ahead architecture enables one to invoke
+            many heuristic features. Research tends to focus on three main categories of
+            heuristics, which we recall here:
+
+                 · Difference heuristics: To measure the difference between the formulae
+                    before and after a look-ahead. The quality of the used difference heuristic
+                    influences the actual impact of the decision variable.
+
+                 · Direction heuristics: Given a decision variable xdecision, one can choose
+                    whether to examine first the positive branch F [xdecision = 1] or the neg-
+                    ative branch F [xdecision = 0]. Effective direction heuristics improve the
+                    performance on satisfiable formulae.
+
+                 · Pre-selection heuristics: To reduce the computational costs, look-ahead
+                    can be restricted to a subset of the variables. As a possible negative conse-
+                    quence, however, a smaller pre-selected set of variables may result in fewer
+                    detected failed literals and a less effective decision variable.
+
+            5.3.1. Difference heuristics
+
+            This section covers the branching heuristics used in look-ahead Sat solvers. A
+            general description of these heuristics is offered in Chapter 7. To measure the
+            difference between a formula and its reduction after a look-ahead (in short Diff),
+            various kinds of statistics can be applied. For example: The reduction of the
+            number of free variables, the reduction of the number of clauses, the reduced size
+            of clauses, or any combination. Posit uses the reduced number of free variables as
+            Diff [Fre95]. All look-ahead Sat solvers which participated in the Sat competi-
+            tions use a Diff based on newly created (reduced, but not satisfied) clauses. The
+            set of new clauses created during the look-ahead on x is denoted by F [x = 1] \ F .
+
+i                                                                                                           i
+         i                                                                                         i
+         i                "p01c05lah" -- 2008/11/20 -- 16:31 -- page 165 -- #11                              i
+i                                                                                                                     i
+
+                               Chapter 5. Look-Ahead Based SAT Solvers                              165               i
+                                                                                                             i
+            All these heuristics use weights to quantify the relative importance of clauses of
+            a certain size. The importance of a clause of size k is denoted by k and the
+            subformula of F which contains only the clauses of size k is denoted by Fk. This
+            section discusses and compares three main Diff heuristics.
+
+            5.3.1.1. Clause reduction heuristic
+
+            The Diff implemented by Kullmann in OKsolver [Kul02] uses only the k weights
+            and is called clause reduction heuristic5 (CRH):
+
+                               CRH(xi) := k · |F [xi = 1]k \ F |                with
+
+                                                      k2
+
+                             2 := 1, 3 := 0.2, 4 := 0.05, 5 := 0.01, 6 := 0.003
+                                          k := 20.4514 · 0.218673k for k  7
+
+            These constants k for k = 3, 4, 5, 6 are the result of performance optimization of
+            the OKsolver on random k-Sat formulae, while the formula for k  7 is the result
+            of linear regression [Kul02].
+
+            5.3.1.2. Weighted binaries heuristic
+
+            Weighted binaries heuristic (WBH) is developed by Li and Anbulagan [LA97b]
+
+            and applied in the solver satz. Each variable is weighted (both positive and
+
+            negative) based on its occurrences in the formula. Let #(¬x) denote the number
+
+            of occurences of literal x. Each new binary clause x  y is weighted using the
+
+            sum of the weights of their complementary literals. The sum #(¬x) + #(¬y)
+
+            expresses the number of clauses on which resolution can be done with x  y.
+
+            Occurrences in a clause of size k is valued 5k-3. This weighting function
+
+            followed from performance optimization of satz over random formulae. Notice
+
+            that  as  in  the  OKsolver  (i.e.  k  in  CRH)  clauses  of  size  k+1  are  about  1  of  the
+                                                                                                 5
+            importance of clauses of size k.
+
+                          wWBH(xi) := k · #k(xi)             with k := 5k-3
+
+                                                    k2
+
+                          WBH(xi) :=                         wWBH(¬x) + wWBH(¬y)
+
+                                         (xy){F [xi=1]2\F2}
+
+            5.3.1.3. Backbone search heuristic
+
+            Backbone search heuristic (BSH) was developed by Dubois and Dequen [DD01].
+            This heuristic is inspired by the concept of the backbone of a formula - the set of
+            variables that has a fixed truth value in all assignments satisfying the maximum
+
+                5This heuristic is also known as MNC and is further discussed in Section 7.7.4.1.
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 166 -- #12                                       i
+i                                                                                                                     i
+
+            166  Chapter 5. Look-Ahead Based SAT Solvers
+
+            number of clauses [MZK+99]. Like WBH, variables are weighted based on their
+            occurrences in clauses of various sizes. Clauses of size k + 1 are considered only
+            half6 as important than clauses of size k.
+
+                 The most influential difference between WBH and BSH is that the latter
+            multiplies the weights of the literals in the newly created binary clauses - while
+            the former adds them. For every new clause x  y, the product #(¬x) · #(¬y)
+            expresses the number of resolvents that can be created due to the new clause.
+
+                 wBSH(xi) := k · #k(xi)                         with k := 2k-3
+
+                                         k2
+
+                 BSH(xi) :=                             wBSH(¬x) · wBSH(¬y)
+
+                             (xy)F [xi=1]2\F
+
+            Notice that both wBSH(xi) and BSH(xi) express the importance of literal xi.
+            Since BSH(xi) is far more costly to compute than wBSH(xi), BSH could only
+            improve performance if it proves to be a better heuristic than wBSH. So far, this
+            claim only holds for random formulae.
+
+                 Based on the assumption that BSH(xi) is better than wBSH(xi), Dubois and
+            Dequen [DD01] propose to iterate the above by using BSH(xi) instead of wBSH(xi)
+            for the second iteration to improve the accuracy of the heuristic. This can be
+            repeated by using the BSH(xi) values of iteration i (with i > 2) to compute
+            BSH(xi) of iteration i + 1. However, iterating BSH makes it much more costly.
+            In general, performing only a single iteration is optimal in terms of solving time.
+
+                 In [DD03] Dubois and Dequen offer a normalization procedure for BSH such
+            that it weighs all newly created clauses - instead of only the binary ones. The
+            normalization is required for fast performances on random k-Sat formula with
+            k > 3. Backbone Search Renormalized Heuristic (in short BSRH) consists of two
+            additional aspects: 1) Smaller clauses are more heavier using the k weights, and
+            2) the wBSH values to compute BSH(xi) are renormalized, by dividing them by
+            the average weight of all literals in F [xi = 1] \ F - denoted by µBSH(xi).
+
+                 µBSH :=     CF [xi=1]\F xC wBSH(¬x)
+                                      CF [xi=1]\F |C|
+
+                 BSRH(xi) :=                            |C|  ·      wBSH(¬x)
+                                                                    µBSH(xi)
+                                           CF [xi=1]\F          xC
+
+            Similar to BSH, BSRH can be iterated to improve accuracy.
+
+                6Although the various descriptions of the heuristic [DD01, DD03] use a factor 2, the actual
+
+            implementation of the heuristic in kcnfs (see http://www.laria.u-picardie.fr/~dequen/sat/)
+            also uses factor 5.
+
+i                                                                                                                     i
+         i                                                                                                   i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 167 -- #13                                     i
+i                                                                                                              i
+
+                  Chapter 5. Look-Ahead Based SAT Solvers                              167                     i
+                                                                                                      i
+            5.3.1.4. Comparison of Diff heuristics
+            Example 5.3.1. Consider the unsatisfiable 3-Sat formula Fheuristic below:
+
+              Fheuristic = (¬x1  x2  ¬x6)  (¬x2  ¬x3  ¬x4)  (¬x1  ¬x2  ¬x7) 
+
+                                  (¬x1  ¬x3  x4)  (x1  ¬x3  x4)  (x1  ¬x3  ¬x4) 
+                                   (x2  x3  ¬x4)  (¬x2  x3  x5)  (¬x2  x3  ¬x5) 
+
+                             (x1  x2  x6)  (x1  x2  x7)  (x2  x4  ¬x5)  (x2  x4  x5)
+
+            Table 5.1 compares the heuristic values of look-aheads on Fheuristic using the
+            three heuristics CRW, WBH, and BSH. Notice that CRH prefers x2 as decision
+            variable, while WBH and BSH prefer x3. The latter choice will result in a smaller
+            search-tree. Between WBH and BSH the preferred ordering differs as well. For
+            BSH, variables x4 and x5 are relatively more important than for WBH.
+
+                 BSH is the most effective heuristic on random k-Sat formulae. The relative
+            effectiveness of these heuristics on structured instances is not well studied yet.
+
+            Table 5.1. Comparison between the heuristic values of the look-ahead on the variables in
+
+            Fheuristic using CRH, WBH and BSH. The product is used as MixDiff.
+
+            #(xi) #(¬xi) MixDiff(CRH) MixDiff(WBH) MixDiff(BSH)
+
+            x1 4  4  4 · 4 = 16 24 · 21 = 504 30 · 27 = 810
+
+            x2 6  3  3 · 6 = 18 17 · 33 = 516 20 · 40 = 800
+
+            x3 3  4  4 · 3 = 12 30 · 23 = 690 56 · 36 = 2016
+
+            x4 4  3  3 · 4 = 12 21 · 24 = 504 36 · 36 = 1296
+
+            x5 2  2  2·2=4  15 · 15 = 225 27 · 27 = 729
+
+            x6 1  1  1·1=1  7 · 7 = 49 12 · 12 = 144
+
+            x7 1  1  1·1=1  10 · 7 = 70 24 · 12 = 288
+
+            5.3.2. Direction heuristics
+
+            Various state-of-the-art satisfiability (Sat) solvers use direction heuristics to pre-
+            dict the sign of the decision variables: These heuristics choose, after the selection
+            of the decision variable, which Boolean value is examined first. Direction heuris-
+            tics are in theory very powerful: If always the correct Boolean value is chosen,
+            satisfiable formulae would be solved without backtracking. Moreover, existence
+            of perfect direction heuristics (computable in polynomial time) would prove that
+            P = N P. These heuristics are also discussed in Section 7.9.
+
+                 Although very powerful in theory, it is difficult to formulate effective direction
+            heuristics in practice. Look-ahead Sat solvers even use complementary strategies
+            to select the first branch - see Section 5.3.2.1.
+
+                 Direction heuristics may bias the distribution of solutions in the search-tree.
+            For instance, while using march or kcnfs, such a biased distribution is observed
+            on hard random 3-Sat formulae. A biased distribution can be used to replace
+            the DPLL depth-first search by a search that visits subtrees in order of increasing
+            likelihood of containing a solution - see Section 5.3.2.2.
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 168 -- #14                                              i
+i                                                                                                                            i
+
+            168      Chapter 5. Look-Ahead Based SAT Solvers
+
+                                        x6
+
+                     x9
+                                                                                            x1
+
+                                                                    x8
+
+                                        x5
+
+                                            x7
+
+                 x2
+
+                                            x3
+
+                                        x7
+
+                                                                    x8
+                                                                                            x9
+
+                     x6
+
+                                            x1
+
+                                        x3                    x5
+
+                                            x7
+
+            x4
+
+                                            x5
+
+                                        x2
+
+                     x1
+
+                                                                x6
+                                                                                                                x2
+
+                                                                                        x3
+
+                 x7
+
+                                        x3
+
+                                                                    x5
+                                                                                            x1
+
+                     x2
+
+                 positive left branch                          x1
+                 positive right branch
+                 negative left branch   x9
+                 positive right branch
+                                                               x8
+                                                                                       x3
+
+            Figure 5.4. Complete binary search-tree (DPLL) for a formula with nine variables (x1, . . . , x9).
+            The decision variables are shown inside the internal nodes. A node is colored black if all child
+            nodes are unsatisfiable, and white otherwise. The type of edge shows whether it is visited
+            first (left branch), visited last (right branch), its decision variable is assigned to true (positive
+            branch), or its decision variable is assigned to false (negative branch).
+
+i                                                                                                                            i
+         i                                                                                                          i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 169 -- #15                                  i
+i                                                                                                           i
+
+            Chapter 5. Look-Ahead Based SAT Solvers                                  169                    i
+                                                                                                   i
+                 The search-tree of a DPLL-based Sat solver can be visualized as a binary
+            search-tree, see Figure 5.4. This figure shows such a tree with decision variables
+            drawn in the internal nodes. Edges show the type of each branch. We will refer
+            to the left branch as the subformula that is visited first. Consequently, the right
+            branch refers to the one examined later. A black leaf refers to an unsatisfiable
+            dead end, while a white leaf indicates that a satisfying assignment has been found.
+            An internal node is colored black in case both its children are black, and white
+            otherwise. For instance, at depth 4 of this search-tree, 3 nodes are colored white.
+            This means that at depth 4, 3 subtrees contain a solution.
+
+            5.3.2.1. Complementary strategies
+
+            A wide range of direction heuristics is used in look-ahead Sat solvers:
+
+            · kcnfs7 selects F [xdecision = 1] if xdecision occurs more frequently in F than
+               ¬xdecision. Otherwise it selects F [xdecision = 0].
+
+            · march selects F [xdecision = 1] if Diff( F , F [xdecision = 1] ) is smaller than
+               Diff( F , F [xdecision = 0] ), and F [xdecision = 0] otherwise [HDvZvM04].
+
+            · OKsolver selects the subformula with the smallest probability that a random
+
+            assignment will falsify a random formula of the same size [Kul02]. It prefers
+
+            the minimum sum of
+
+                                               -|Fk| · ln(1 - 2-k)                   (5.1)
+
+                                k2
+
+            · posit selects F [xdecision = 0] if xdecision occurs more often than ¬xdecision in
+               the shortest clauses of F . Otherwise it selects F [xdecision = 1] [Fre95].
+
+            · satz8 does not use direction heuristics and starts with F [xdecision = 1].
+
+            These heuristics can be divided into two strategies:
+            A) Estimate which subformula will require the least computational time.
+            This strategy assumes that it is too hard to predict whether a subformula is sat-
+            isfiable. Therefore, if both subformulae have the same expectation of containing
+            a solution, you will find a solution faster by starting with the one that requires
+            less computational time. From the above solvers, posit uses this strategy.
+
+                 Notice that conflict-driven SAT solvers may prefer this strategy to focus on
+            the most unsatisfiable subformula. This may result in an early conflict, and
+            possibly a short conflict clause. However, since the current look-ahead SAT solvers
+            do not add conflict clauses, this argument is not applicable for these solvers.
+            B) Estimate which subformula has the highest probability of being satisfiable.
+            If a formula is satisfiable, then it is expected that the subformula which is heuris-
+            tically the most satisfiable will be your best bet. The other subformula may be
+            unsatisfiable and - more importantly - a waste of time. The solvers kcnfs, march,
+            and OKsolver use this strategy.
+
+            Generally these two strategies are complementary: The subformula which can be
+            solved with relatively less computational effort is probably the one which is more
+            constraint and therefore has a smaller probability being satisfiable. In practice,
+
+                7version 2006
+                8version 2.15.2
+
+i
+         i
+         i           "p01c05lah" -- 2008/11/20 -- 16:31 -- page 170 -- #16                           i
+i                                                                                                             i
+
+                170                   Chapter 5. Look-Ahead Based SAT Solvers
+
+            for example, satisfiable hard random k-Sat formulae are solved faster by using
+
+            a direction heuristic based on strategy B, while on various structured satisfiable
+
+            instances strategy A is more successful.
+
+                The balancedness of the DPLL search-tree could hint which is the best strat-
+
+            egy to use: In a balanced search-tree, solving F [xdecision = 0] requires almost as
+            much effort as solving F [xdecision = 1] for each decision variable xdecision. In this
+            case, strategy A seems less appealing. Since look-ahead solvers produce a bal-
+
+            anced search tree on hard random k-Sat formulae, strategy B would be preferred.
+
+                On the other hand, in an unbalanced search-tree one could get lucky using
+
+            strategy A which would be therefore preferred. On many structured instances
+
+            look-ahead Sat solvers produce an unbalanced search-tree - although the Mix-
+
+            Diff heuristic attempts to achieve a balanced search-tree.
+
+                Based on this explanation, march ks uses both strategies: Strategy B is used
+
+            (as implemented in march dl) in case Diff(F , F [x = 0]) and Diff(F , F [x = 1])
+
+            are comparable. Otherwise, strategy A is used by preferring the complementary
+
+            branch which would have been selected by march dl. In march ks, "comparable"
+
+            is  implemented  as  0.1    Diff(F ,F [x=0])   10.
+                                        Diff(F ,F [x=1])
+
+            5.3.2.2. Distribution of solutions
+
+            Given a family of benchmark instances, we can observe the effectiveness of the
+            direction heuristic used in a certain solver on that particular family. The observa-
+            tion can be illustrated as follows: Consider the subtrees at depth d of the DPLL
+            search-tree. Subtrees are denoted by Ti with i = {1, ..., 2d} and are numbered in
+            depth-first order. The histogram showing the number of formulae in the given
+            family containing at least one solution in Ti is called a solution distribution plot.
+
+                 Figures 5.5 and 5.6 show solution distribution plots at depth 12 for march dl
+            and kcnfs respectively on 3000 random 3-Sat formulae with 350 variables and
+            1491 clauses (at phase transition density). The observed distribution is clearly
+            biased for both solvers. The distribution observed using march dl is more biased
+            than the one using kcnfs. Based on these plots, one could conclude that the
+            direction heuristics used in march dl are more effective for the instances at hand.
+
+                 For both solvers, the number of formulae with at least one solution in Ti is
+            highly related to the number of left branches that is required to reach Ti. With
+            this in mind, the DPLL depth first search can be replaced [HvM06b] by a search
+            strategy that, given a jump depth, visits the subtrees at that depth in the order of
+            required left branches. Using jump depth 12, first subtree T1 is visit (twelve left
+            branches, zero right branches), followed by subtrees T2, T3, T5, T9, ..., T2049 (eleven
+            left branches, one right branch), etc. Random satisfiable formulae of the same
+            size are on average solved much faster using modified DPLL search.
+
+                 Notice that for conflict-driven solvers this kind of solution distribution plots
+            could not be made. The most important reason is that there is no clear left
+            and right branch, because conflict clauses assign former decision variables to the
+            complement of the preferred truth value. Another difficulty to construct these
+            plots is the use of restarts in conflict-driven solvers. Finally, the use of lazy data-
+            structures makes it very expensive to apply a direction heuristic that requires
+            much statistical data.
+
+i                                                                                                             i
+         i                                                                                           i
+         i          "p01c05lah" -- 2008/11/20 -- 16:31 -- page 171 -- #17                                                                           i
+i                                                                                                                                                            i
+
+                         Chapter 5. Look-Ahead Based SAT Solvers           171
+
+            700
+
+            600                                                                 12
+
+                                                                                10
+
+            500                                                                 8
+
+                                                                                6
+
+            400                                                                 4
+
+                                                                                                                                                 2
+            300
+
+                                                                                                                                                 0
+
+            200
+
+            100
+
+            0       T29  T210  T211                               T212
+                T1
+
+            Figure 5.5. Solution distribution plot with march dl showing for each subtree Ti at depth 12
+            the number of formulae that have at least one solution in that subtree. Used 3000 random 3-Sat
+            formulae with 350 variables and 1491 clauses.
+
+            5.3.3. Pre-selection heuristics
+
+            Overall performance can be gained or lost by performing look-ahead on a subset
+            of the free variables in each node of the DPLL-tree: Gains are achieved by the
+            reduction of computational costs, while losses are the result of either the inabil-
+            ity of the pre-selection heuristics (heuristics that determine the set of variables
+            to enter the look-ahead phase) to select effective decision variables or to predict
+            candidate failed literals. When look-ahead is performed on a subset of the vari-
+            ables, only a subset of the failed literals is most likely detected. Depending on
+            the formula, this could increase the size of the DPLL-tree. This section describes
+            the two most commonly used pre-selection heuristics in look-ahead Sat solvers:
+            propz and clause reduction approximation.
+
+            5.3.3.1. propz
+
+            Li [LA97a] developed the propz heuristic for his solver satz, which is also used in
+            kcnfs. It pre-selects variables based on their occurrences in binary clauses. The
+            propz heuristic is developed to perform faster on hard random k-Sat formulae.
+            Near the root of the search-tree it pre-selects all free variables. From a certain
+            depth on, it pre-selects only variables that occur both positive and negative in
+            binary clauses. It always pre-selects a lower bound of 10 variables.
+
+                 Although this heuristic is effective on hard random k-Sat formulae, its behav-
+            ior on structured instances is not clear. On some benchmarks it will pre-select all
+            free variables in all nodes of the search-tree, while on others it always pre-selects
+            slightly more variables than the lower bound used.
+
+i                                                                                                                                                            i
+         i                                                                                                                                          i
+         i             "p01c05lah" -- 2008/11/20 -- 16:31 -- page 172 -- #18                               i
+i                                                                                                                   i
+
+            172             Chapter 5. Look-Ahead Based SAT Solvers
+
+            180        T29  T210        T211                                          12
+            160                                                                       10
+            140                                                                       8
+            120                                                                       6
+            100                                                                       4
+                                                                                      2
+             80                                                                       0
+             60
+             40                                                      T212
+             20
+
+               0
+                   T1
+
+            Figure 5.6. Solution distribution plot with kcnfs showing for each subtree Ti at depth 12 the
+            number of formulae that have at least one solution in that subtree. Used 3000 random 3-Sat
+            formulae with 350 variables and 1491 clauses.
+
+            5.3.3.2. Clause reduction approximation
+
+            In march the pre-selection heuristics are based on an approximation of a decision
+            heuristic that counts the number of newly created clauses, called clause reduc-
+            tion approximation (CRA). It uses the sizes of all clauses in the formula and
+            is therefore more costly than propz. First, the set of variables to be assigned
+            during look-ahead on x is approximated. All variables that occur with ¬x in
+            binary clauses are used as approximated set. Second, if yi occurs in this set than
+            all n-ary clauses in which ¬yi occurs will be reduced. This is an approximation
+            of the number of newly created clauses, because some of the reduced ones will
+            be satisfied. Third, the product is used as MixDiff. Let #>2(xi) denote the
+            number of occurrences of literal xi in clauses with size > 2. For all free variables
+            CRA is computed as:
+
+                       CRA(x) :=        #>2(¬yi) ·         #>2(¬yi)           (5.2)
+
+                                  xyiF              ¬xyiF
+
+            Variables with the highest CRA scores are pre-selected for the LookAhead pro-
+            cedure. Once the CRA scores are computed, one has to determine how many
+            variables should be pre-selected. The optimal number varies heavily form bench-
+            mark to benchmark and from node to node in the search-tree. Early march
+            versions used a fraction of the original number of variables. Most versions used
+            10% of the number of variables, which is refered to as Rank10%. Later versions
+            use an adaptive heuristic discussed in the next paragraph.
+
+i                                                                                                                   i
+         i                                                                                                 i
+         i         "p01c05lah" -- 2008/11/20 -- 16:31 -- page 173 -- #19                            i
+i                                                                                                            i
+
+                              Chapter 5. Look-Ahead Based SAT Solvers               173                      i
+                                                                                                    i
+            Table 5.2. Average number of variables selected for the LookAhead procedure by Rank10%
+            and propz for 300 variables and 1275 clauses random 3-Sat problems.
+
+            depth  #freeVars  propz    Rank10%            depth   #freeVars  propz  Rank10%
+               1     298.24   298.24       30               11      264.55   26.81      30
+               2     296.52   296.52       30               12      260.53   21.55      30
+               3     294.92   293.89       30               13      256.79   19.80      30
+               4     292.44   292.21       30               14      253.28   19.24      30
+               5     288.60   280.04       30               15      249.96   19.16      30
+               6     285.36   252.14       30               16      246.77   19.28      30
+               7     281.68   192.82       30               17      243.68   19.57      30
+               8     277.54   125.13       30               18      240.68   19.97      30
+               9     273.17   71.51        30               19      237.73   20.46      30
+              10     268.76   40.65        30               20      234.82   20.97      30
+
+            5.3.3.3. Adaptive Ranking
+
+            As observed in [HDvZvM04], the optimal number of pre-selected variables is
+            closely related to the number of detected failed literals: When relatively many
+            failed literals were detected, a larger pre-selected set appeared optimal. Let
+            #failedi be the number of detected failed literals in node i. To exploit this cor-
+            relation, the average number of detected failed literals is used as an indicator for
+            the (maximum) size of the pre-selected set in node n (denoted by RankAdaptn):
+
+                                                          S  n
+                                                          n
+                              RankAdaptn        :=  L  +          #failedi          (5.3)
+
+                                                             i=1
+
+                 In the above, parameter L refers to the lower bound of RankAdaptn (namely
+            when the average tends to zero) and S is a parameter modelling the importance
+            of failed literals. March eq uses L := 5 and S := 7 based on experiments on
+            structured and random benchmarks. Notice that the above adaptive pre-selection
+            heuristics are heavily influenced by the decision heuristics - which in turn are also
+            affected by these heuristics.
+
+                 Generally RankAdapt select a subset of the free variables, but in some cases
+            - due to many detected failed literals - all free variables are selected. It may occur
+            that, during the LookAhead procedure, all selected variables are forced. In that
+            case a new set of variables is pre-selected.
+
+            5.4. Additional Reasoning
+
+            Selection of decision variables by performing many look-aheads is very expen-
+            sive compared to alternative decision heuristics. As such, this could hardly be
+            considered as an advantage. However, since the decision heuristics are already
+            costly, some additional reasoning is relatively cheap. This section presents various
+            techniques that can be added to the LookAhead procedure in order to improve
+            overall performance.
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 174 -- #20                            i
+i                                                                                                          i
+
+            174           Chapter 5. Look-Ahead Based SAT Solvers
+
+                 Look-ahead on variables which will not result in a conflict appears only useful
+            to determine which variable has the highest decision heuristic value. However,
+            by applying some additional reasoning, look-ahead on some variables can also be
+            used to reduce the formula (like failed literals). Look-ahead on the other variables
+            can be used to add resolvents (learned clauses) to further constrain the formula.
+            Three kinds of additional reasoning are used in look-ahead Sat solvers for these
+            purposes: Local learning (Section 5.4.1), autarky detection (Section 5.4.2), and
+            double look-ahead (Section 5.4.3).
+
+            5.4.1. Local learning
+
+            During the look-ahead on x, other variables yi can be assigned by unit prop-
+            agation. Some due to the presence of binary clauses ¬x  (¬)yi, called direct
+            implications. Variables assigned by other clauses are called indirect implications.
+            For those variables yi that are assigned to true (or false) by a look-ahead on x
+            though indirect implications, a binary clause ¬x  yi (or ¬x  ¬yi, respectively)
+            can be added to the formula. This is referred to as local learning. As the name
+            suggests, these clauses are not globally valid and should therefore be removed
+            while backtracking.
+
+            Example 5.4.1. Consider the formula Flearning below:
+
+            Flearning := (¬x1  x2)  (¬x1  ¬x2  x3)  (¬x1  ¬x3  x4)  (x1  x3  x6) 
+                                  (¬x1  x4  ¬x5)  (x1  ¬x6)  (x4  x5  x6)  (x5  ¬x6)
+
+            Some look-aheads on literals (¬)xi will result in unit clauses, thereby assigning
+            other variables. These assignments are listed below:
+
+            [x1 := 0]  {x3=1, x6=0}        [x4 := 0]  {}
+            [x1 := 1]  {x2=1, x3=1, x4=1}  [x4 := 1]  {}
+            [x2 := 0]  {x1=0, x3=1, x6=0}  [x5 := 0]  {x4=1, x6=0}
+            [x2 := 1]  {}                  [x5 := 1]  {}
+            [x3 := 0]  {}                  [x6 := 0]  {}
+            [x3 := 1]  {}                  [x6 := 1]  {x1=1, x2=1, x3=1, x4=1, x5=1}
+
+            Eight of the above assignments follow from indirect implications. Therefore, these
+            can be added to Flearning:
+
+                  x1  x3           ¬x1  x4  x2  ¬x6                 x4  x5
+                 ¬x1  x3           x2  ¬x3  x3  ¬x6                x4  ¬x6
+
+                 In the example above, the number of binary clauses that could be added by
+            local learning is equal to the number of original clauses in Flearning. In most real
+            world examples, the number of local learned clauses is significantly larger than the
+            number of original clauses. Therefore, adding all these binary clauses is generally
+            not useful because it slows down propagation.
+
+i                                                                                                          i
+         i                                                                                        i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 175 -- #21                                   i
+i                                                                                                            i
+
+            Chapter 5. Look-Ahead Based SAT Solvers                175
+
+            5.4.1.1. Necessary assignments
+
+            A cheap technique to reduce the size of the formula is detection of necessary
+            assignments: If the look-ahead on xi assigns xj to true and the look-ahead on
+            ¬xi assigns xj to true then the assignment xj to true is referred to as necessary.
+            This technique requires only the short storage of implications. First, store all
+            implications while performing look-ahead on xi. Then continue with look-ahead
+            on ¬xi and check for each implication whether it is in the stored list. All matches
+            are necessary assignments. After look-ahead on ¬xi the stored implications can
+            be removed.
+
+                 In Example 5.4.1, variable x3 is necessarily assigned to true because it is
+            implied by both x1 and ¬x1. Necessary assignments can also be detected by
+            adding local learned clauses: When these clauses are added, look-ahead on the
+            complement of the necessary assignment will fail. Notice that by searching for
+            necessary assignments, variables which are a not in the pre-selected set can be
+            forced to an assignment.
+
+                 Searching for necessary assignments is a simplified technique of learning in
+            the St°almarck's proof procedure [SS98]. This patented procedure learns the in-
+            tersection of the new clauses in the reduced formulae (after look-ahead on xi
+            and ¬xi). Necessary assignments are only the new unit clauses in this inter-
+            section. One could learn even more by adding clauses of size 2 and larger, but
+            none of the current look-ahead Sat solvers adds these clauses because computing
+            them is quite expensive. However, the HeerHugo Sat solver [GW00], inspired
+            the the St°almarck's proof procedure, performs the "full" learning. The theory
+            regarding these and other strengthenings of unit clause propagation are discussed
+            in [Kul99a, Kul04].
+
+            5.4.1.2. Constraint resolvents
+
+            The concept of necessary assignments is not sufficient to detect all forced literals
+            by using local learning. For example, after adding the learned clauses ¬x1  x4
+            and x4  x5, look-ahead on ¬x4 will fail, forcing x4 to be assigned to true. Now,
+            the question arises: Which local learned clauses should be added to detect all
+            forced literals?
+
+                 Local learned clauses are useful when the number of assigned variables is
+            increased during look-ahead on the complement of one of its literals. For instance,
+            given a formula with clauses x1 x2 and ¬x2 x3. The local learned clause x1 x3
+            is not useful because look-ahead on ¬x1 would already assign x3 to true and look-
+            ahead on ¬x3 would already assign x1 to true.
+
+                 However, given a formula with clauses x1  x2 and x1  ¬x2  x3 then local
+            learned clause x1  x3 is useful: Only after adding this clause, look-ahead on
+            ¬x3 will assign x1 to true. These useful local learned clauses are referred to as
+            constraint resolvents [HDvZvM04].
+
+                 In Example 5.4.1, all local learned clauses except x2  ¬x6 are constraint
+            resolvents. Yet, in practice, only a small subset of the local learned clauses are
+            constraint resolvents. In Section 5.5.1 a technique is explained to efficiently detect
+            constaints resolvents.
+
+i                                                                                                            i
+         i                                                                                          i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 176 -- #22                              i
+i                                                                                                            i
+
+            176  Chapter 5. Look-Ahead Based SAT Solvers
+
+            Constraint resolvents and heuristics. Pre-selection heuristics rank variables
+            based on their occurrences in binary clauses - see Section 5.3.3. Addition of
+            constraint resolvents (or local learned clauses in general) will increase the occur-
+            rences in binary clauses of variables in the pre-selected set in particular. So, once
+            variables are pre-selected, their rank will rise, increasing the chances of being pre-
+            selected again in a next node. Therefore, it becomes harder for "new" variables
+            to enter the look-ahead phase.
+
+            5.4.2. Autarky Reasoning
+
+            An autarky (or autark assignment) is a partial assignment  that satisfies all
+            clauses that are "touched" by . So, all satisfying assignments are autark assign-
+            ments. Autarkies that do not satisfy all clauses can be used to reduce the size
+            of the formula: Let Ftouched be the clauses in F that are satisfied by an autarky.
+            The remaining clauses F  := F \ Ftouched are satisfiability equivalent with F
+            - see Chapter 11. So, if we detect an autark assignment, we can reduce F by
+            removing all clauses in Ftouched.
+
+            5.4.2.1. Pure literals
+
+            The smallest example of an autarky is a pure literal: A literal which negation
+            does not occur in the formula. Consider the example formula below:
+
+                              Fpure literal := (x1  ¬x2)  (¬x1  x3)  (¬x2  ¬x3)
+
+            Variable x2 occurs only negated in this formula - making ¬x2 a pure literal.
+            Assigning x2 to false will therefore only satisfy clauses. Under this assignment
+            the only clause left is (¬x1  x3). Now both ¬x1 and x3 are pure literals. So by
+            assigning a pure literal to true could make other literals pure.
+
+            5.4.2.2. Autarky detection by look-ahead
+
+            Look-aheads can also be used to detect autarkies. Whether a look-ahead resulted
+            in an autark assignment requires a check that all reduced clauses became satis-
+            fied. Recall that the CRH and the BSH look-ahead evaluation heuristics count
+            (and weight, respectively) the newly created clauses. While using these heuristics,
+            an autarky detection check can be computed efficiently: All reduced clauses are
+            satisfied if and only if their heuristic value is 0.
+
+            Example 5.4.2. Consider the formula Fautarky below.
+
+                          Fautarky := (x1  ¬x2)  (¬x1  x5)  (¬x1  x2  ¬x3) 
+                                          (x3  x4)  (¬x2  ¬x3  ¬x4)  (x2  x4  x5)
+
+            The heuristic values of the CRH look-ahead evaluation heuristic (in this case the
+            number of newly created binary clauses) of all possible look-aheads on Fautarky
+            are shown in Table 5.3. Both the look-aheads on ¬x3 and ¬x5 result in a heuristic
+            value of 0. The first represents the autark assignment  = {x3 = 0, x4 = 1}, and
+            the second represents the autarky assignment  = {x1 = x2 = x5 = 0}.
+
+i                                                                                                            i
+         i                                                                                          i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 177 -- #23                                           i
+i                                                                                                                    i
+
+            Chapter 5. Look-Ahead Based SAT Solvers                177                                               i
+                                                                                                            i
+            Table 5.3. Number of new binary clauses after a look-ahead on xi on Fautarky. For this formula
+            these values equal CRH(xi) because the largest clause has length 3.
+
+                                                  x1 ¬x1 x2 ¬x2 x3 ¬x3 x4 ¬x4 x5 ¬x5
+                                  CRH(xi) 2 2 1 2 2 0 1 2 1 0
+
+                 In general, look-ahead Sat solvers do not check whether a look-ahead satisfies
+            all remaining clauses - thereby detecting a satisfying assignment. By detecting
+            autarkies, satisfying assignments will also be detected as soon as they appear.
+
+            5.4.2.3. Look-ahead autarky resolvents
+
+            In case a look-ahead satisfies all but one of the reduced clauses, we have almost
+            detected an autarky. In Example 5.4.2 the look-ahead on x2, x4, and x5 cre-
+            ated only one clause that was not satisfied: ¬x3  ¬x4, ¬x2  ¬x3, and x2  x4
+            respectively. Due to these binary clauses none of the variables is forced to a value.
+
+                 However, we know that if such a particular clause were satisfied, we would
+            have detected an autarky. This knowledge can be added to the formula: In case
+            of the look-ahead on x2, if ¬x3  ¬x4 is satisfied x2 is true. So ¬x3  x2 and
+            ¬x4  x2. The binary clauses of these implications x3 x2 and x4 x2 are referred
+            to as look-ahead autarky resolvents ­ see also Section 11.13.2 and [Kul99c, Kul99b].
+            These can be added to the formula to further constrain it. Generally, let C be
+            the only reduced clause which is not satisfied after the look-ahead on x. For all
+            literals li in C we can add to the formula an look-ahead autarky resolvent x  ¬li.
+
+            Look-ahead autarky resolvents and heuristics. Although look-ahead au-
+            tarky resolvents further constrain a formula, their addition could contribute to
+            a significant drop in performance of a solver. The reason for this paradox can
+            be found in the effect of look-ahead autarky resolvents on the heuristics: Ac-
+            cording to difference heuristics, variables are important if they create many new
+            clauses. Therefore, variables on which look-ahead results in only a single new
+            clause should be considered unimportant. However, the heuristic values of WBH,
+            BSH, and CRA increases after adding these look-ahead autarky resolvents. This
+            makes it more likely that unimportant variables are chosen as decision variable.
+            Therefore, it is useful to neglect these clauses while computing the heuristics.
+
+            5.4.3. Double look-ahead
+
+            Due to the design of MixDiff heuristics in look-ahead Sat solvers, unbalanced
+            variables are rarely selected as decision variables. To compensate for this, Li
+            developed the DoubleLook procedure [Li99]. This procedure performs look-
+            aheads on a second level of propagation (on the reduced formula after a look-
+            ahead) to increase the number of detected forced literals.
+
+                 We refer to the double look-ahead on x as calling the DoubleLook procedure
+            on the reduced formula F [x = 1]. A double look-ahead on x is called successful
+            if the DoubleLook procedure detects that F [x = 1] is unsatisfiable. Otherwise
+            it is called unsuccessful. Similar to a failed look-ahead on x, a successful double
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 178 -- #24                             i
+i                                                                                                           i
+
+            178  Chapter 5. Look-Ahead Based SAT Solvers
+
+            look-ahead on x detects a conflict in F [x = 1] and thereby forces x to be assigned
+            to false.
+
+                 Although double look-aheads are expensive, they can be a relative efficient
+            method to detect some forced literals in practice. In order to reduce the solving
+            time, many double look-aheads must be successful. Prediction of the success of a
+            double look-ahead is therefore essential.
+
+            Double look-ahead heuristics. The heuristics regarding double look-aheads
+            focus on the success predictor. Li suggests to use the number of newly created
+            binary clauses as an effective predictor [Li99]. If the number of newly created
+            binary clauses during look-ahead on x (denoted by |F [x = 1]2 \ F | is larger than
+            a certain parameter (called trigger) than the DoubleLook procedure should be
+            triggered. All double look-ahead heuristics are concerned with the optimal value
+            of trigger.
+
+                 The first implementation of the DoubleLook procedure used a static value
+            for trigger. Li implemented trigger := 65 in his solver satz. This magic con-
+            stant is based on experiments on hard random 3-Sat formulae. Although these
+            instances can be solved much faster using this setting, on structured instances it
+            frequently results in the call of too many double look-aheads, which will reduce
+            overall performance.
+
+                 Another static implementation for trigger is found in kcnfs by Dubois and
+            Dequen. They use trigger := 0.17 · n, with n referring to the original number of
+            variables. This setting also arises from experiments on random 3-Sat formulae.
+            Especially on random and structured instances with large n, better results are
+            obtained compared to trigger := 65.
+
+                 A first dynamic heuristic was developed by Li for a later version of satz. It
+            initializes trigger := 0.17 · n. If a double look-ahead on x is unsuccessful, trigger
+            is updated to trigger := |F [x = 1]2 \ F |. The motivation for the update is as
+            follows: Assuming the number of newly created binary clauses is an effective pre-
+            dictor for success of a double look-ahead, and because the double look-ahead on
+            x was unsuccessful, trigger should be at least |F [x = 1]2 \ F |. After a successful
+            DoubleLook call, trigger is reset to trigger = 0.17 · n. In practice, this dynamic
+            heuristic "turns off" the DoubleLook procedure on most structured instances.
+            The procedure is only rarely triggered due to the first update rule. The per-
+            formance on these instances is improved to back to normal (i.e. not calling the
+            DoubleLook at all).
+
+                 A second dynamic heuristic was developed by Heule and Van Maaren for their
+            solver march dl [HvM07]. It initializes trigger := 0. Like the dynamic heuristic in
+            satz, it updates trigger = |F [x = 1]2 \ F | after an unsuccessful double look-ahead
+            on x. The important difference is that trigger is not decreased after a successful
+            doublelook, but trigger is slightly reduced after each look-ahead. Therefore, dou-
+            ble look-aheads are performed once in a while. On random instances this dynamic
+            heuristic yields comparable performances on random formulae. However, the use
+            of the DoubleLook procedure with this heuristic improves the performance on
+            many structured instances as well.
+
+i                                                                                                           i
+         i                                                                                         i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 179 -- #25                                   i
+i                                                                                                            i
+
+            Chapter 5. Look-Ahead Based SAT Solvers                179                                       i
+                                                                                                    i
+            5.4.3.1. Double look-ahead resolvents
+
+            An unsuccessful double look-ahead is generally not a total wast of time. For
+            example, the look-ahead on xi triggers the DoubleLook procedure. On the
+            second level of propagation three failed literals are detected: xr, ¬xs, and xt. Thus
+            we learn xi  ¬xr, xi  xs, and xi  ¬xt - equivalent to the binary clauses
+            ¬xi  ¬xr, ¬xi  xs, ¬xi  ¬xt. Since the DoubleLook procedure performs
+            additional look-aheads on free variables in F [xi = 1], we know that F does not
+            contain these binary clauses - otherwise they would have been assigned already.
+
+                 We refer to these binary clauses as double look-ahead resolvents. In case a
+            double look-ahead is unsuccessful, double look-ahead resolvents can be added
+            to F to further constrain the formula. On the other hand, a successful double
+            look-ahead on xi will force xi to false, thereby satisfying all these resolvents.
+
+                 Adding double look-ahead resolvents can be useful to reduce overall costs
+            caused by the DoubleLook procedure. If a look-ahead on xi triggers this proce-
+            dure and appears to by unsuccessful, it is likely that it will trigger it again in the
+            next node of the search-tree. By storing the failed literals at the second level of
+            propagation as resolvents, the DoubleLook procedure does not have to perform
+            costly look-aheads to detect them again.
+
+                 Double look-ahead resolvents and heuristics. Since the DoubleLook
+            procedure is triggered when a look-ahead on literal (¬)xi creates many new binary
+            clauses, the Diff values for those literals is relatively high. Adding double look-
+            ahead resolvents will further boost these Diff values. This increases the chance
+            that variables are selected as decision variable because the Diff of either its
+            positive or negative literal is very large. Concluding: By adding double look-
+            ahead resolvents, decision heuristics may select decision variables yielding a more
+            unbalanced search-tree.
+
+            5.5. Eager Data-Structures
+
+            Unit propagation is the most costly part of state-of-the-art complete Sat solvers.
+            Within conflict-driven solvers, the computational costs of unit propagation is
+            reduced by using lazy data-structures such as 2-literal watch pointers. Yet, for
+            look-ahead Sat solvers these data-structures are not useful: The costs of unit
+            propagation in these solvers is concentrated in the LookAhead procedure due
+            to the numerous look-aheads. To compute the difference heuristics (as presented
+            in Section 5.3.1), one requires the sizes of the reduced clauses. By using lazy
+            data-structures, these sizes cannot be computed cheaply. However, by using eager
+            data-structures the unit propagation costs can be reduced. The use of eager data-
+            structures originates form the Bo¨hm Sat solver [BS96]. This section offers three
+            techniques to reduce the costs of unit propagation:
+
+                 · Efficient storage of binary clauses: Binary clauses can be stored such
+                    that they require only half the memory compared to conventional storage.
+                    In general, structured instances consists mostly of binary clauses. This
+                    significantly reduces the storage of the formula. Such a way of storage
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 180 -- #26                                        i
+i                                                                                                                      i
+
+            180                Chapter 5. Look-Ahead Based SAT Solvers
+
+               reduces the cost of unit propagation and makes it possible to cheaply detect
+               constraint resolvents - see Section 5.5.1
+            · Removal of inactive clauses: Many of the original clauses become inac-
+               tive (satisfied) down in the search-tree. Look-ahead can be performed faster
+               if these clauses are removed from the data-structures - see Section 5.5.2
+            · Tree based look-ahead: Many propagations made during the look-ahead
+               phase are redundant. A technique called tree-based look-ahead reduces this
+               redundancy using implication trees - see Section 5.5.3.
+
+            5.5.1. Binary implication arrays
+
+            Generally, clauses are stored in a clause database together with a look-up table
+            for each literal in which clauses it occurs. Such a storage is relatively expensive
+            for binary clauses: Instead of storing the clauses, one could add the implications
+            of assigning a literal to true directly in the "look-up table" [PH02]. We refer to
+            such a storage as binary implication arrays. Notice that the latter data-structure
+            requires only half the space compared to the former one. Figure 5.7 shows a
+            graphical example of both data-structures for four binary clauses. Storing clauses
+            in separate binary and non-binary (n-ary) data-structures reduces the computa-
+            tional costs of unit propagation: 1) Cache performance is improved because of
+            the cheaper storage, and 2) No look-up is required for binary clauses when they
+            are stored in binary implication arrays.
+
+                 clause0   x1   x2        x1 0 3    x1 ¬x3
+                 clause1  ¬x2   x3      ¬x1 2     ¬x1 x2 x3
+                 clause2  ¬x1  ¬x3
+                 clause3   x1   x3        x2 0      x2 x3
+                                        ¬x2 1     ¬x2 x1
+
+                                          x3 1 3    x3 ¬x1
+                                        ¬x3 2     ¬x3 ¬x2 x1
+
+                                    (a)                   (b)
+
+            Figure 5.7. (a) A structure with binary clauses stored in a clause database, and literal look-up
+            arrays containing the indices that point to the clauses in which they occur. (b) Binary clauses
+            stored in implication arrays.
+
+                 Besides the cheaper storage, splitting a formula in binary clauses (F2) and
+            n-ary clauses (F>2) is also useful to efficiently detect constraint resolvents: Recall
+            that constraint resolvents consist of the complement of the look-ahead literal and
+            a literal that only occurs in a unit clause that originates from an n-ary clause.
+            By performing unit propagation in such a way that unit clauses resulting from
+            clauses in F2 are always preferred above those in F>2, the latter can be used to
+            construct constraint resolvents. Algorithm 5.4 shows this binary clause preferred
+            (BCP) unit propagation including the addition of constraint resolvents. Notice
+            that this procedure returns both an expanded formula with learned constraint
+            resolvents (F2  F>2) and a reduced formula by the look-ahead (F [x = 1]).
+
+i                                                                                                                      i
+         i                                                                                                    i
+         i             "p01c05lah" -- 2008/11/20 -- 16:31 -- page 181 -- #27                        i
+i                                                                                                            i
+
+                           Chapter 5. Look-Ahead Based SAT Solvers            181                            i
+                                                                                                    i
+            Algorithm 5.4 BCPUnitPropagation( formula F , variable x )
+
+            1:  := {x  1}
+
+            2: while empty clause /   F2 and a unit clause    F2 do
+
+            3: while empty clause /   F2 and unit clause {y}    F2 do
+
+            4:   :=   {y  1}
+
+            5: end while
+
+            6: if empty clause /   F>2 and unit clause {y}    F>2 then
+
+            7:  F2 := F2  {¬x  y}
+
+            8: end if
+
+            9: end while
+
+            10: return F2  F>2,   F
+
+            5.5.2. Removal of inactive clauses
+
+            The presence of inactive clauses increases the computational costs of unit propaga-
+            tion during the LookAhead procedure. Two important causes can be observed:
+            First, the larger the number of clauses considered during a look-ahead, the poorer
+            the performance of the cache. Second, if both active and inactive clauses occur
+            in the data-structure during the look-ahead, a check is required to determine
+            the status of every clause. Removal of inactive clauses from the data-structure
+            prevents these unfavorable effects from taking place.
+
+                 All satisfied clauses are clearly inactive clauses. In case clauses are stored in
+            separate binary and n-ary data-structures (see Section 5.5.1), then also clauses
+            become inactive if they are represented in both data-structures: If an n-ary clause
+            becomes a binary one and is added to the binary clause data-structure, it can be
+            removed from the n-ary data-structure.
+
+            5.5.3. Tree-based look-ahead
+
+            Suppose the LookAhead procedure is about to perform look-ahead on the free
+            variables x1, x2, and x3 on a formula that contains the binary clauses x1  ¬x2
+            and x1  ¬x3. Obviously, the look-ahead on x1 will assign all variables that are
+            forced by x1 = 1. Also, due to the binary clauses, the look-ahead on x2 and x3
+            will assign these variables (amongst others). Using the result of the look-ahead
+            on x1, the look-aheads on x2 and x3 can be performed more efficiently.
+
+                 Generally, suppose that two look-ahead literals share a certain implication.
+            In this simple case, we could propagate the shared implication first, followed
+            by a propagation of one of the look-ahead literals, backtracking the latter, then
+            propagating the other look-ahead literal and finally backtracking to the initial
+            state. This way, the shared implication has been propagated only once.
+
+                 Figure 5.8 shows this example graphically. The implications (from the binary
+            clauses) among x1, x2 and x3 form a small tree. Some thought reveals that
+            this process, when applied recursively, could work for arbitrary trees. Based
+            on this idea - at the start of each look-ahead phase - trees can be constructed
+            from the implications between the literals selected for look-ahead, in such a way
+            that each literal occurs in exactly one tree. By recursively visiting these trees,
+            the LookAhead procedure is more efficient. Of course, the more dense the
+            implication graph which arises from the binary clauses, the more possibilities are
+            available to form trees. Adding all sorts of resolvents will in many cases be an
+            important catalyst for the effectiveness of this method.
+
+i
+         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 182 -- #28                               i
+i                                                                                                             i
+
+            182                 Chapter 5. Look-Ahead Based SAT Solvers
+
+                 F [x2 = 1]       34           F [x3 = 1]                implication
+                         2      F [x1 = 1]       5                       action
+
+                                                           1             propagate x1
+
+                                                           2             propagate x2
+
+                                                           3             backtrack x2
+
+                             1              6              4             propagate x3
+
+                                                           5             backtrack x3
+
+                                F                          6             backtrack x1
+
+                 Figure 5.8. Graphical form of an implication tree with corresponding actions.
+
+            References
+
+                 [BKB92] Michael Buro and Hans Kleine Bu¨ning. Report on a sat competi-
+                              tion, 1992.
+
+                    [BS96] Max B¨ohm and Ewald Speckenmeyer. A fast parallel sat-solver -
+                              efficient workload balancing. Ann. Math. Artif. Intell., 17(3-4):381­
+                              400, 1996.
+
+                  [CKS95] J. M. Crawford, M. J. Kearns, and R. E. Schapire. The minimal
+                              disagreement parity problem as a hard satisfiability problem, 1995.
+
+                   [DD01] Olivier Dubois and Gilles Dequen. A backbone-search heuristic for
+                              efficient solving of hard 3-SAT formulae. In Bernhard Nebel, editor,
+                              IJCAI, pages 248­253. Morgan Kaufmann, 2001.
+
+                   [DD03] Gilles Dequen and Olivier Dubois. kcnfs: An efficient solver for
+                              random k-SAT formulae. In Enrico Giunchiglia and Armando Tac-
+                              chella, editors, SAT, volume 2919 of Lecture Notes in Computer
+                              Science, pages 486­501. Springer, 2003.
+
+                  [DLL62] Martin Davis, George Logemann, and Donald Loveland. A machine
+                              program for theorem-proving. Commun. ACM, 5(7):394­397, 1962.
+
+                    [Fre95] Jon William Freeman. Improvements to propositional satisfiabil-
+                              ity search algorithms. PhD thesis, University of Pennsylvania,
+                              Philadelphia, PA, USA, 1995.
+
+                  [GW00] J. F. Groote and J. P. Warners. The propositional formula checker
+                              heerhugo. Journal of Automated Reasoning, 24:101­125, 2000.
+
+            [HDvZvM04] Marijn J. H. Heule, Mark Dufour, Joris E. van Zwieten, and Hans
+                              van Maaren. March eq: Implementing additional reasoning into an
+                              efficient look-ahead SAT solver. In Holger H. Hoos and David G.
+                              Mitchell, editors, SAT (Selected Papers, volume 3542 of Lecture
+                              Notes in Computer Science, pages 345­359. Springer, 2004.
+
+                   [Her06] Paul Herwig. Decomposing satisfiability problems. Master's thesis,
+                              TU Delft, 2006.
+
+                [HvM06a] Marijn J. H. Heule and Hans van Maaren. March dl: Adding adap-
+                              tive heuristics and a new branching strategy. Journal on Satisfia-
+                              bility, Boolean Modeling and Computation, 2:47­59, 2006.
+
+i                                                                                                             i
+         i                                                                                           i
+         i  "p01c05lah" -- 2008/11/20 -- 16:31 -- page 183 -- #29                                  i
+i                                                                                                           i
+
+            Chapter 5. Look-Ahead Based SAT Solvers                183
+
+            [HvM06b] Marijn J. H. Heule and Hans van Maaren. Whose side are you
+                           on? finding solutions in a biased search-tree. Technical report,
+                           Proceedings of Guangzhou Symposium on Satisfiability In Logic-
+                           Based Modeling, 2006.
+
+              [HvM07] Marijn J. H. Heule and Hans van Maaren. Effective incorpora-
+                           tion of double look-ahead procedures. In Joao Marques-Silva and
+                           Karem A. Sakallah, editors, Theory and Applications of Satisfiabil-
+                           ity Testing - SAT 2007, volume 4501 of Lecture Notes in Computer
+                           Science, pages 258­271. Springer, 2007.
+
+                [KL99] Oliver Kullmann and H. Luckhardt. Algorithms for SAT/TAUT
+                           decision based on various measures, 1999. Preprint, 71 pages, avail-
+                           able on http://cs.swan.ac.uk/~csoliver/Artikel/TAUT.ps.
+
+              [Kul99a] Oliver Kullmann. Investigating a general hierarchy of polynomially
+                           decidable classes of CNF's based on short tree-like resolution proofs.
+                           Technical Report TR99-041, Electronic Colloquium on Computa-
+                           tional Complexity (ECCC), October 1999.
+
+              [Kul99b] Oliver Kullmann. New methods for 3-SAT decision and worst-case
+                           analysis. Theoretical Computer Science, 223(1-2):1­72, July 1999.
+
+              [Kul99c] Oliver Kullmann. On a generalization of extended resolution. Dis-
+                           crete Applied Mathematics, 96-97(1-3):149­176, 1999.
+
+                [Kul02] Oliver Kullmann. Investigating the behaviour of a SAT solver
+                           on random formulas. Technical Report CSR 23-2002, Uni-
+                           versity of Wales Swansea, Computer Science Report Series
+                           (http://www-compsci.swan.ac.uk/reports/2002.html), Octo-
+                           ber 2002. 119 pages.
+
+                [Kul04] Oliver Kullmann. Upper and lower bounds on the complexity of
+                           generalised resolution and generalised constraint satisfaction prob-
+                           lems. Annals of Mathematics and Artificial Intelligence, 40(3-
+                           4):303­352, March 2004.
+
+               [LA97a] Chu Min Li and Anbulagan. Heuristics based on unit propagation
+                           for satisfiability problems. In IJCAI (1), pages 366­371, 1997.
+
+               [LA97b] Chu Min Li and Anbulagan. Look-ahead versus look-back for sat-
+                           isfiability problems. In Gert Smolka, editor, CP, volume 1330 of
+                           Lecture Notes in Computer Science, pages 341­355. Springer, 1997.
+
+                  [Li99] Chu Min Li. A constraint-based approach to narrow search trees
+                           for satisfiability. Information processing letters, 71(2):75­80, 1999.
+
+                  [Li00] Chu Min Li. Integrating equivalency reasoning into davis-putnam
+                           procedure. In Proceedings of the Seventeenth National Conference
+                           on Artificial Intelligence and Twelfth Conference on Innovative Ap-
+                           plications of Artificial Intelligence, pages 291­296. AAAI Press /
+                           The MIT Press, 2000.
+
+            [MZK+99] R´emi Monasson, Riccardo Zecchina, Scott Kirkpatrick, Bart Sel-
+                           man, and Lidror Troyansky. Determining computational complex-
+                           ity from characteristic 'phase transitions'. Nature, 400:133­137,
+                           1999.
+
+                [PH02] S. Pilarski and G. Hu. Speeding up sat for eda. In DATE '02:
+                           Proceedings of the conference on Design, automation and test in
+
+i                                                                                                           i
+         i                                                                                         i
+         i       "p01c05lah" -- 2008/11/20 -- 16:31 -- page 184 -- #30                      i
+i                                                                                                    i
+
+            184  Chapter 5. Look-Ahead Based SAT Solvers
+
+                          Europe, page 1081, Washington, DC, USA, 2002. IEEE Computer
+                          Society.
+                 [SS98] Mary Sheeran and Gunnar St°almarck. A tutorial on st°almarcks's
+                          proof procedure for propositional logic. In FMCAD '98: Proceed-
+                          ings of the Second International Conference on Formal Methods in
+                          Computer-Aided Design, pages 82­99, London, UK, 1998. Springer-
+                          Verlag.
+
+i                                                                                                    i
+         i                                                                                  i
+

@@ -1,0 +1,4 @@
+c the empty clause is unsatisfiable and appears in no occurrence list
+p cnf 2 2
+1 2 0
+0

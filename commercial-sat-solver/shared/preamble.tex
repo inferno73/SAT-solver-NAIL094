@@ -1,0 +1,58 @@
+% Shared preamble for the NAIL094 reports
+% Used by every task via \input{../../shared/preamble}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{caption}
+
+\usepackage[hidelinks]{hyperref}
+
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+% Title fields, set these in the report before \begin{document}
+\makeatletter
+\newcommand{\reportcourse}[1]{\def\@reportcourse{#1}}
+\newcommand{\reporttask}[1]{\def\@reporttask{#1}}
+\newcommand{\reportauthor}[1]{\def\@reportauthor{#1}}
+
+\newcommand{\makereporttitle}{%
+  \begin{center}
+    {\LARGE\bfseries \@reportcourse \par}
+    \vspace{0.8em}
+    {\Large \@reporttask \par}
+    \vspace{0.6em}
+    {\normalsize \@reportauthor \par}
+  \end{center}
+  \vspace{1em}
+  \hrule
+  \vspace{1.5em}
+}
+\makeatother
+
+% Inline code
+\newcommand{\code}[1]{\texttt{#1}}
+
+% Code listings
+\lstdefinestyle{reportcode}{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  commentstyle=\color{gray},
+  stringstyle=\color{green!40!black},
+  breaklines=true,
+  showstringspaces=false,
+  frame=single,
+  rulecolor=\color{gray!40},
+  numbers=none,
+}
+\lstset{style=reportcode}
